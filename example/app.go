@@ -335,6 +335,7 @@ func DefaultAnteHandler(
 }
 
 // MakeEncodingConfig creates an EncodingConfig for an amino based test configuration.
+// 每个 module  的 router
 func MakeEncodingConfig() simappparams.EncodingConfig {
 	encodingConfig := simappparams.MakeTestEncodingConfig()
 	std.RegisterLegacyAminoCodec(encodingConfig.Amino)

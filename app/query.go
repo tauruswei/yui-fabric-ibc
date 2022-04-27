@@ -1,14 +1,14 @@
 package app
 
 import (
-	"strings"
-
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
+	"github.com/prometheus/common/log"
 	abci "github.com/tendermint/tendermint/abci/types"
 	tmproto "github.com/tendermint/tendermint/proto/tendermint/types"
 	"google.golang.org/grpc/codes"
 	grpcstatus "google.golang.org/grpc/status"
+	"strings"
 )
 
 // Query implements the ABCI interface. It delegates to CommitMultiStore if it
@@ -17,6 +17,7 @@ func (app *BaseApp) Query(req abci.RequestQuery) abci.ResponseQuery {
 
 	// handle gRPC routes first rather than calling splitPath because '/' characters
 	// are used as part of gRPC paths
+	log.Infof("path = %s", req.GetPath())
 	if grpcHandler := app.grpcQueryRouter.Route(req.Path); grpcHandler != nil {
 		return app.handleQueryGRPC(grpcHandler, req)
 	}

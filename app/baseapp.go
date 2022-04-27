@@ -192,6 +192,7 @@ func (app *BaseApp) RunTx(stub shim.ChaincodeStubInterface, txBytes []byte) (res
 	ctx := setupContext(sdk.NewContext(ms, app.getBlockHeader(), false, app.logger), stub)
 
 	msgs := tx.GetMsgs()
+	// 验证 msg 信息是否合法
 	if err := validateBasicTxMsgs(msgs); err != nil {
 		return nil, err
 	}

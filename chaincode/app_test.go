@@ -2,6 +2,7 @@ package chaincode_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -42,6 +43,8 @@ func (suite *AppTestSuite) TestTransfer() {
 	chainB := suite.chainB.(*fabrictesting.TestChain)
 
 	originalBalance := chainA.App.BankKeeper.GetBalance(suite.chainA.GetContext(), chainA.SenderAccount.GetAddress(), sdk.DefaultBondDenom)
+	fmt.Println(originalBalance)
+	fmt.Println(chainB.App.BankKeeper.GetBalance(suite.chainB.GetContext(), chainB.SenderAccount.GetAddress(), sdk.DefaultBondDenom))
 	timeoutHeight := clienttypes.NewHeight(0, 110)
 
 	coinToSendToB := sdk.NewCoin(sdk.DefaultBondDenom, sdk.NewInt(100))
@@ -50,6 +53,9 @@ func (suite *AppTestSuite) TestTransfer() {
 	msg := transfertypes.NewMsgTransfer(channelA.PortID, channelA.ID, coinToSendToB, chainA.SenderAccount.GetAddress().String(), chainB.SenderAccount.GetAddress().String(), timeoutHeight, 0)
 	err := suite.coordinator.SendMsg(suite.chainA, suite.chainB, clientB, msg)
 	suite.Require().NoError(err) // message committed
+
+	fmt.Println(chainA.App.BankKeeper.GetBalance(suite.chainA.GetContext(), chainA.SenderAccount.GetAddress(), sdk.DefaultBondDenom))
+	fmt.Println(chainB.App.BankKeeper.GetBalance(suite.chainB.GetContext(), chainB.SenderAccount.GetAddress(), sdk.DefaultBondDenom))
 
 	// relay send
 	fungibleTokenPacket := transfertypes.NewFungibleTokenPacketData(coinToSendToB.Denom, coinToSendToB.Amount.Uint64(), chainA.SenderAccount.GetAddress().String(), chainB.SenderAccount.GetAddress().String())
@@ -73,6 +79,7 @@ func (suite *AppTestSuite) TestTransfer() {
 	// check that voucher exists on chain B
 	voucherDenomTrace := transfertypes.ParseDenomTrace(transfertypes.GetPrefixedDenom(packet.GetDestPort(), packet.GetDestChannel(), sdk.DefaultBondDenom))
 	balance := chainB.App.BankKeeper.GetBalance(suite.chainB.GetContext(), chainB.SenderAccount.GetAddress(), voucherDenomTrace.IBCDenom())
+	fmt.Println(balance)
 
 	coinToSendBackToA := transfertypes.GetTransferCoin(channelB.PortID, channelB.ID, sdk.DefaultBondDenom, 100)
 	suite.Require().Equal(coinToSendBackToA, balance)

@@ -32,7 +32,12 @@ func NewCoordinator(t *testing.T, n int, mspID string, txSignMode TxSignMode) *C
 
 	for i := 0; i < n; i++ {
 		chainID := GetChainID(i)
-		chains[chainID] = NewTestFabricChain(t, chainID, mspID, txSignMode)
+		if i == 1 {
+			chains[chainID] = NewTestFabricChain1(t, chainID, mspID, txSignMode, "sNS7h3zOZ4Ma6O/D96nxYtA4zrf0dyVbn/gsq7tFn4E=")
+		} else {
+			chains[chainID] = NewTestFabricChain1(t, chainID, mspID, txSignMode, "xKGICfNEYdb2KkGPZFACunChGM5kK2tVt+cYs4PDFq8=")
+
+		}
 	}
 	return &Coordinator{
 		t:      t,
@@ -80,7 +85,7 @@ func (coord *Coordinator) SetupClients(
 	chainA, chainB TestChainI,
 	clientType string,
 ) (string, string) {
-
+	// 创建 chainB 在 chainA 上的客户端
 	clientA, err := coord.CreateClient(chainA, chainB, clientType)
 	require.NoError(coord.t, err)
 
@@ -95,8 +100,9 @@ func (coord *Coordinator) CreateClient(
 	source, counterparty TestChainI,
 	clientType string,
 ) (clientID string, err error) {
+	// 增加测试链的 时间戳
 	coord.CommitBlock(source, counterparty)
-
+	// fmt.Sprintf 通过 获取 clientid 的值
 	clientID = source.NewClientID(clientType)
 
 	switch clientType {
@@ -113,7 +119,7 @@ func (coord *Coordinator) CreateClient(
 	if err != nil {
 		return "", err
 	}
-
+	// 增加 测试链时间戳
 	coord.IncrementTime()
 
 	return clientID, nil
@@ -228,6 +234,7 @@ func (coord *Coordinator) ConnOpenInit(
 	source, counterparty TestChainI,
 	clientID, counterpartyClientID string, nextChannelVersion string,
 ) (*TestConnection, *TestConnection, error) {
+	// 将新建的 connection 添加到 chain 的 connection 切片中
 	sourceConnection := source.AddTestConnection(clientID, counterpartyClientID, nextChannelVersion)
 	counterpartyConnection := counterparty.AddTestConnection(counterpartyClientID, clientID, nextChannelVersion)
 
@@ -500,6 +507,7 @@ func (coord *Coordinator) AcknowledgePacket(
 // CommitBlock commits a block on the provided indexes and then increments the global time.
 //
 // CONTRACT: the passed in list of indexes must not contain duplicates
+// 增加测试链的 时间戳
 func (coord *Coordinator) CommitBlock(chains ...TestChainI) {
 	for _, chain := range chains {
 		switch chain.Type() {

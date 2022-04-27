@@ -1,6 +1,7 @@
 package testing
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -274,6 +275,164 @@ func NewTestFabricChain(t *testing.T, chainID string, mspID string, txSignMode T
 
 	// generate genesis account
 	senderPrivKey := secp256k1.GenPrivKey()
+	fmt.Println(base64.StdEncoding.EncodeToString(senderPrivKey.Key))
+	acc := authtypes.NewBaseAccount(senderPrivKey.PubKey().Address().Bytes(), senderPrivKey.PubKey(), 0, 0)
+	genAccs := []authtypes.GenesisAccount{acc}
+	authGenesis := authtypes.NewGenesisState(authtypes.DefaultParams(), genAccs)
+	genesisState[authtypes.ModuleName] = app.AppCodec().MustMarshalJSON(authGenesis)
+
+	balance := banktypes.Balance{
+		Address: acc.GetAddress().String(),
+		Coins:   sdk.NewCoins(sdk.NewCoin(sdk.DefaultBondDenom, sdk.NewInt(100000000000000))),
+	}
+	balances := []banktypes.Balance{balance}
+
+	// bondAmt := sdk.NewInt(1000000)
+	// totalSupply := sdk.NewCoins()
+	// add genesis acc tokens and delegated tokens to total supply
+	// totalSupply = totalSupply.Add(balance.Coins.Add(sdk.NewCoin(sdk.DefaultBondDenom, bondAmt))...)
+	totalSupply := balance.Coins
+	bankGenesis := banktypes.NewGenesisState(banktypes.DefaultGenesisState().Params, balances, totalSupply, []banktypes.Metadata{})
+
+	genesisState[banktypes.ModuleName] = app.AppCodec().MustMarshalJSON(bankGenesis)
+
+	ibcGenesisState := ibctypes.DefaultGenesisState()
+	ibcGenesisState.ClientGenesis.Params.AllowedClients = append(ibcGenesisState.ClientGenesis.Params.AllowedClients, fabrictypes.Fabric)
+	genesisState[ibc.AppModule{}.Name()] = app.AppCodec().MustMarshalJSON(ibcGenesisState)
+
+	// create current header and call begin block
+	header := tmproto.Header{
+		ChainID: chainID,
+		Height:  1,
+		Time:    globalStartTime,
+	}
+
+	// Fabric configuration
+
+	conf, err := fabrictypes.DefaultConfig()
+	require.NoError(t, err)
+	// setup the MSP manager so that we can sign/verify
+	mconf, bconf, err := fabrictests.GetLocalMspConfig(conf.MSPsDir, mspID)
+	require.NoError(t, err)
+	lcMSP, err := fabrictests.SetupLocalMsp(mconf, bconf)
+	require.NoError(t, err)
+	endorser, err := lcMSP.GetDefaultSigningIdentity()
+	require.NoError(t, err)
+
+	// TODO fix to clarify this method(or name?)
+	err = fabrictests.GetVerifyingConfig(mconf)
+	require.NoError(t, err)
+
+	// create an account to send transactions from
+	chain := &TestChain{
+		t:                  t,
+		ChainID:            chainID,
+		App:                app.(*example.IBCApp),
+		CC:                 cc,
+		Stub:               stub,
+		CurrentHeader:      header,
+		QueryServer:        app.GetIBCKeeper(),
+		TxConfig:           simapp.MakeTestEncodingConfig().TxConfig,
+		Codec:              app.AppCodec(),
+		Vals:               valSet,
+		Signers:            signers,
+		ClientIDs:          make([]string, 0),
+		Connections:        make([]*TestConnection, 0),
+		NextChannelVersion: ChannelTransferVersion,
+
+		fabChaincodeID: fabrictypes.ChaincodeID{
+			Name:    "dummyCC",
+			Version: "dummyVer",
+		},
+		fabChannelID: "dummyChannel",
+		mspConfig:    *mconf,
+		endorser:     endorser,
+		currentTime:  globalStartTime,
+		seqMgr:       seqMgr,
+		txSignMode:   txSignMode,
+	}
+
+	switch txSignMode {
+	case TxSignModeStdTx:
+		chain.SenderAccount = acc
+	case TxSignModeFabricTx:
+		chain.SenderAccount = NewAccount(acc, getTestId())
+	default:
+		panic(fmt.Sprintf("unknown txSignMode %v", txSignMode))
+	}
+
+	stub.GetTxTimestampReturns(&timestamppb.Timestamp{Seconds: globalStartTime.Unix()}, nil)
+	var tctx contractapi.TransactionContext
+	tctx.SetStub(stub)
+
+	seqMgr.SetClock(func() time.Time {
+		return chain.currentTime
+	})
+
+	// Init chaincode
+	jsonBytes, err := json.Marshal(genesisState)
+	require.NoError(t, err)
+	require.NoError(t, chain.CC.InitChaincode(&tctx, string(jsonBytes)))
+
+	// cap := chain.App.IBCKeeper.PortKeeper.BindPort(chain.GetContext(), MockPort)
+	// pp.Println(chain.App.ScopedIBCMockKeeper)
+	// err = chain.App.ScopedIBCMockKeeper.ClaimCapability(chain.GetContext(), cap, host.PortPath(MockPort))
+	// require.NoError(t, err)
+
+	chain.NextBlock()
+
+	return chain
+}
+func NewTestFabricChain1(t *testing.T, chainID string, mspID string, txSignMode TxSignMode, keyStrng string) *TestChain {
+	// generate validator private/public key
+	privVal := mock.NewPV()
+	pubKey, err := privVal.GetPubKey()
+	require.NoError(t, err)
+
+	// create validator set with single validator
+	validator := tmtypes.NewValidator(pubKey, 1)
+	valSet := tmtypes.NewValidatorSet([]*tmtypes.Validator{validator})
+	signers := []tmtypes.PrivValidator{privVal}
+
+	logger := tmlog.NewTMLogger(os.Stdout)
+	seqMgr := commitment.NewSequenceManager(
+		commitment.CommitmentConfig{
+			MinTimeInterval:  0,
+			MaxTimestampDiff: 30 * time.Second,
+		},
+		commitmenttypes.NewMerklePrefix([]byte(host.StoreKey)),
+	)
+
+	var anteHandlerProvider app.AnteHandlerProvider
+	switch txSignMode {
+	case TxSignModeStdTx:
+		anteHandlerProvider = example.DefaultAnteHandler
+	case TxSignModeFabricTx:
+		anteHandlerProvider = newAnteHandler
+	default:
+		panic(fmt.Sprintf("unknown txSignMode %v", txSignMode))
+	}
+
+	cc := chaincode.NewIBCChaincode(chainID, logger, seqMgr, newApp, anteHandlerProvider, chaincode.DefaultDBProvider, chaincode.DefaultMultiEventHandler())
+	runner := cc.GetAppRunner()
+	stub := testsstub.MakeFakeStub()
+	app, err := newApp(
+		chainID,
+		logger,
+		compat.NewDB(stub),
+		nil,
+		seqMgr,
+		runner.GetBlockProvider(stub),
+		anteHandlerProvider,
+	)
+	require.NoError(t, err)
+
+	genesisState := makeGenesisState()
+
+	// generate genesis account
+	senderPrivKey := secp256k1.GenPrivKey()
+	keyBytes, _ := base64.StdEncoding.DecodeString(keyStrng)
+	senderPrivKey.Key = keyBytes
 	acc := authtypes.NewBaseAccount(senderPrivKey.PubKey().Address().Bytes(), senderPrivKey.PubKey(), 0, 0)
 	genAccs := []authtypes.GenesisAccount{acc}
 	authGenesis := authtypes.NewGenesisState(authtypes.DefaultParams(), genAccs)
@@ -522,7 +681,7 @@ func (chain *TestChain) CreateClient(counterparty TestChainI, clientID string) e
 		panic("not implemented error")
 	}
 
-	// construct MsgCreateClient using counterparty
+	// construct MsgCreateClient using counterparty, 不同的消息类型，对应不同的处理器
 	msg := chain.ConstructMsgCreateClient(counterparty, clientID, Fabric)
 	return chain.sendMsgs(msg)
 }
@@ -999,7 +1158,9 @@ func (chain *TestChain) ConstructMsgCreateClient(counterparty TestChainI, client
 		clientState = solo.ClientState()
 		consensusState = solo.ConsensusState()
 	case Fabric:
+		// 构建 client state 结构体
 		clientState = chain.NewFabricClientState(counterparty, clientID)
+		// 获取 counterparty 最新的时间戳
 		consensusState = chain.NewFabricConsensusState(counterparty)
 	default:
 		chain.t.Fatalf("unsupported client state type %s", clientType)
@@ -1022,6 +1183,7 @@ func (chain *TestChain) NewFabricConsensusState(counterparty TestChainI) *fabric
 	return &fabrictypes.ConsensusState{Timestamp: counterparty.GetApp().(*example.IBCApp).BlockProvider()().Timestamp()}
 }
 
+// 构建 client state 结构体
 func (chain *TestChain) NewFabricClientState(counterparty TestChainI, clientID string) *fabrictypes.ClientState {
 	mspID := "SampleOrgMSP"
 	var pcBytes []byte = makePolicy([]string{mspID})
