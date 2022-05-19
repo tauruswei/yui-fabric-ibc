@@ -22,6 +22,7 @@ func (app *BaseApp) Query(req abci.RequestQuery) abci.ResponseQuery {
 		return app.handleQueryGRPC(grpcHandler, req)
 	}
 
+	log.Info("not find handler")
 	path := splitPath(req.Path)
 	if len(path) == 0 {
 		return sdkerrors.QueryResult(sdkerrors.Wrap(sdkerrors.ErrUnknownRequest, "no query path provided"))
